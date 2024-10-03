@@ -63,7 +63,7 @@ app.listen(port, () => {
 // Bot command to open the mini app
 bot.onText(/\/profile/, (msg) => {
   const chatId = msg.chat.id;
-  const webAppUrl = `https://your-app-url.com?chatId=${chatId}`; // Replace with your actual hosted mini app URL
+  const webAppUrl = `https://bot-with-miniapp.onrender.com?chatId=${chatId}`; // Replace with your actual hosted mini app URL
 
   bot.sendMessage(chatId, 'Click the button below to view your profile:', {
     reply_markup: {
