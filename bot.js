@@ -3,7 +3,7 @@ const express = require('express');
 const path = require('path');
 
 // Replace 'YOUR_BOT_TOKEN' with your actual bot token
-const token = 'YOUR_BOT_TOKEN';
+const token = '7679342562:AAEZs2D6ZCnf26FV3_YHx2f_D77rlltIsXY';
 const bot = new TelegramBot(token, { polling: true });
 
 // Create an Express app to serve the mini app
