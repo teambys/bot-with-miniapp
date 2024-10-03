@@ -1,6 +1,7 @@
 const TelegramBot = require('node-telegram-bot-api');
 const express = require('express');
 const path = require('path');
+const fs = require('fs').promises;
 
 // Replace 'YOUR_BOT_TOKEN' with your actual bot token
 const token = '7679342562:AAEZs2D6ZCnf26FV3_YHx2f_D77rlltIsXY';
@@ -9,6 +10,9 @@ const bot = new TelegramBot(token, { polling: true });
 // Create an Express app to serve the mini app
 const app = express();
 const port = process.env.PORT || 3000;
+
+// Enable JSON parsing for POST requests
+app.use(express.json());
 
 // Store user information
 const userInfo = new Map();
@@ -70,6 +74,55 @@ app.get('/', async (req, res) => {
     .replace('__USER_PHOTO_URL__', user.photoUrl || 'https://via.placeholder.com/100');
 
   res.send(htmlWithUserInfo);
+});
+
+// Handle note operations
+app.post('/api/notes', async (req, res) => {
+  const { userId, action, noteId, content } = req.body;
+  const notesDir = path.join(__dirname, 'notes');
+  const userNotesFile = path.join(notesDir, `${userId}.json`);
+
+  try {
+    await fs.mkdir(notesDir, { recursive: true });
+
+    let notes = [];
+    try {
+      const data = await fs.readFile(userNotesFile, 'utf8');
+      notes = JSON.parse(data);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+
+    switch (action) {
+      case 'create':
+        if (notes.length >= 20) {
+          return res.status(400).json({ error: 'Maximum number of notes reached' });
+        }
+        const newNote = { id: Date.now(), content };
+        notes.push(newNote);
+        break;
+      case 'update':
+        const noteIndex = notes.findIndex(note => note.id === noteId);
+        if (noteIndex === -1) {
+          return res.status(404).json({ error: 'Note not found' });
+        }
+        notes[noteIndex].content = content;
+        break;
+      case 'delete':
+        notes = notes.filter(note => note.id !== noteId);
+        break;
+      case 'get':
+        return res.json(notes);
+      default:
+        return res.status(400).json({ error: 'Invalid action' });
+    }
+
+    await fs.writeFile(userNotesFile, JSON.stringify(notes));
+    res.json({ success: true, notes });
+  } catch (error) {
+    console.error('Error handling note operation:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
 // Start the server
@@ -241,6 +294,27 @@ const miniAppHtml = `
             --text-color: #ffffff;
             --text-muted: #a0aec0;
         }
+        .note-list {
+            margin-top: 10px;
+        }
+        .note-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 5px;
+        }
+        .note-content {
+            flex-grow: 1;
+            margin-right: 10px;
+        }
+        .note-actions {
+            display: flex;
+            gap: 5px;
+        }
+        .note-actions button {
+            padding: 5px 10px;
+            font-size: 12px;
+        }
     </style>
 </head>
 <body>
@@ -323,8 +397,9 @@ const miniAppHtml = `
             <div id="qrCode"></div>
         </div>
         <div id="notesTool" class="tool-content">
-            <textarea id="notes" placeholder="Write your notes here"></textarea>
-            <button id="saveNotes" class="button">Save Notes</button>
+            <textarea id="noteContent" placeholder="Write your note here"></textarea>
+            <button id="saveNote" class="button">Save Note</button>
+            <div id="noteList" class="note-list"></div>
         </div>
         <div id="calculatorTool" class="tool-content">
             <div id="calc">
@@ -355,6 +430,8 @@ const miniAppHtml = `
 
         document.addEventListener('DOMContentLoaded', () => {
             tg.expand();
+
+            const userId = document.getElementById('userId').textContent;
 
             // Theme toggle functionality
             const themeToggle = document.getElementById('themeToggle');
@@ -395,6 +472,9 @@ const miniAppHtml = `
                         document.getElementById(\`\${t}Tool\`).classList.remove('active');
                     });
                     document.getElementById(\`\${tool}Tool\`).classList.add('active');
+                    if (tool === 'notes') {
+                        loadNotes();
+                    }
                 });
             });
 
@@ -416,12 +496,77 @@ const miniAppHtml = `
             });
 
             // Notes
-            const notes = document.getElementById('notes');
-            const saveNotes = document.getElementById('saveNotes');
-            notes.value = localStorage.getItem('userNotes') || '';
-            saveNotes.addEventListener('click', () => {
-                localStorage.setItem('userNotes', notes.value);
-                tg.showAlert('Notes saved successfully!');
+            const noteContent = document.getElementById('noteContent');
+            const saveNote = document.getElementById('saveNote');
+            const noteList = document.getElementById('noteList');
+
+            function loadNotes() {
+                fetch('/api/notes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId, action: 'get' })
+                })
+                .then(response => response.json())
+                .then(notes => {
+                    noteList.innerHTML = '';
+                    notes.forEach(note => {
+                        const noteElement = document.createElement('div');
+                        noteElement.className = 'note-item';
+                        noteElement.innerHTML = \`
+                            <span class="note-content">\${note.content}</span>
+                            <div class="note-actions">
+                                <button class="edit-note">Edit</button>
+                                <button class="delete-note">Delete</button>
+                            </div>
+                        \`;
+                        noteList.appendChild(noteElement);
+
+                        noteElement.querySelector('.edit-note').addEventListener('click', () => {
+                            noteContent.value = note.content;
+                            saveNote.textContent = 'Update Note';
+                            saveNote.dataset.noteId = note.id;
+                        });
+
+                        noteElement.querySelector('.delete-note').addEventListener('click', () => {
+                            deleteNote(note.id);
+                        });
+                    });
+                });
+            }
+
+            function saveNoteToServer(content, noteId = null) {
+                const action = noteId ? 'update' : 'create';
+                fetch('/api/notes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId, action, noteId, content })
+                })
+                .then(response => response.json())
+                .then(() => {
+                    loadNotes();
+                    noteContent.value = '';
+                    saveNote.textContent = 'Save Note';
+                    delete saveNote.dataset.noteId;
+                });
+            }
+
+            function deleteNote(noteId) {
+                fetch('/api/notes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId, action: 'delete', noteId })
+                })
+                .then(response => response.json())
+                .then(() => {
+                    loadNotes();
+                });
+            }
+
+            saveNote.addEventListener('click', () => {
+                const content = noteContent.value.trim();
+                if (content) {
+                    saveNoteToServer(content, saveNote.dataset.noteId);
+                }
             });
 
             // Calculator
