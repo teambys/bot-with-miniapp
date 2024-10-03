@@ -13,9 +13,8 @@ const port = process.env.PORT || 3000;
 // Store user information
 const userInfo = new Map();
 
-// Fetch user information when the bot starts
-bot.on('text', async (msg) => {
-  const chatId = msg.chat.id;
+// Function to get user info and store it
+async function getUserInfo(chatId) {
   if (!userInfo.has(chatId)) {
     try {
       const user = await bot.getChat(chatId);
@@ -24,20 +23,37 @@ bot.on('text', async (msg) => {
         firstName: user.first_name,
         lastName: user.last_name,
         username: user.username,
-        languageCode: msg.from.language_code,
-        isPremium: msg.from.is_premium || false
+        languageCode: user.language_code,
+        isPremium: user.is_premium || false,
+        photoUrl: user.photo ? await bot.getFileLink(user.photo.big_file_id) : null
       });
       console.log(`User information stored for ${user.first_name}`);
     } catch (error) {
       console.error('Error fetching user information:', error);
     }
   }
+  return userInfo.get(chatId);
+}
+
+// Handle /start command
+bot.onText(/\/start/, async (msg) => {
+  const chatId = msg.chat.id;
+  await getUserInfo(chatId);
+  const webAppUrl = `https://bot-with-miniapp.onrender.com?chatId=${chatId}`;
+
+  bot.sendMessage(chatId, 'Welcome! Click the button below to open your profile:', {
+    reply_markup: {
+      inline_keyboard: [[
+        { text: 'Open Profile', web_app: { url: webAppUrl } }
+      ]]
+    }
+  });
 });
 
 // Serve the mini app HTML
-app.get('/', (req, res) => {
+app.get('/', async (req, res) => {
   const chatId = req.query.chatId;
-  const user = userInfo.get(parseInt(chatId));
+  const user = await getUserInfo(parseInt(chatId));
   
   if (!user) {
     res.status(400).send('User not found');
@@ -50,7 +66,8 @@ app.get('/', (req, res) => {
     .replace('__USER_ID__', user.id)
     .replace('__USER_USERNAME__', user.username || 'Not set')
     .replace('__USER_LANGUAGE__', user.languageCode || 'Not available')
-    .replace('__USER_PREMIUM__', user.isPremium ? 'Yes' : 'No');
+    .replace('__USER_PREMIUM__', user.isPremium ? 'Yes' : 'No')
+    .replace('__USER_PHOTO_URL__', user.photoUrl || 'https://via.placeholder.com/100');
 
   res.send(htmlWithUserInfo);
 });
@@ -60,26 +77,13 @@ app.listen(port, () => {
   console.log(`Mini app server running on port ${port}`);
 });
 
-// Bot command to open the mini app
-bot.onText(/\/profile/, (msg) => {
-  const chatId = msg.chat.id;
-  const webAppUrl = `https://bot-with-miniapp.onrender.com?chatId=${chatId}`; // Replace with your actual hosted mini app URL
-
-  bot.sendMessage(chatId, 'Click the button below to view your profile:', {
-    reply_markup: {
-      inline_keyboard: [[
-        { text: 'Open Profile', web_app: { url: webAppUrl } }
-      ]]
-    }
-  });
-});
-
 // Handle incoming messages
-bot.on('message', (msg) => {
+bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
+  await getUserInfo(chatId);
 
   if (msg.text && msg.text.toLowerCase() === 'hello') {
-    bot.sendMessage(chatId, 'Hello! Use /profile to view your profile mini app.');
+    bot.sendMessage(chatId, 'Hello! Use /start to view your profile mini app.');
   }
 });
 
@@ -242,7 +246,7 @@ const miniAppHtml = `
 <body>
     <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">🌓</button>
     <main class="profile-card">
-        <img src="" alt="Profile Picture" class="profile-picture" id="profilePicture">
+        <img src="__USER_PHOTO_URL__" alt="Profile Picture" class="profile-picture" id="profilePicture">
         <h1 id="userName">__USER_FIRST_NAME__ __USER_LAST_NAME__</h1>
         <div class="info-item">
             <span class="info-label">User ID:</span>
